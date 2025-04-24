@@ -12,23 +12,33 @@ export MFParams, self_consistent_mf, compute_phase_diagram, mean_field_hamiltoni
 @with_kw struct MFParams
     U::Float64            # on‑site repulsion
     t::Float64            # hopping
-    ne::Float64           # electrons per site
-    Nk::Int               # number of k‑points per direction
-    β::Float64            # inverse temperature (for smearing)
-    tol::Float64          # convergence tolerance on densities
+    ne::Float64           # electrons per site (target filling for the 2-site unit cell is 2*ne)
+    Nk::Int               # number of k‑points per direction for BZ integration
+    β::Float64            # inverse temperature (for Fermi-Dirac smearing)
+    tol::Float64          # convergence tolerance on sublattice densities
     maxiter::Int          # max self‑consistency iterations
-    maxμexpansions::Int = 10 # Max attempts to expand μ bracket
-    mixing_alpha::Float64 = 0.5 # Add mixing parameter (0 < alpha <= 1)
-    density_threshold::Float64 = 1e-10 # Threshold to zero out small densities
+    maxμexpansions::Int = 10 # Max attempts to expand μ bracket in find_mu
+    mixing_alpha::Float64 = 0.5 # Linear mixing parameter for density updates (0 < alpha <= 1)
+    density_threshold::Float64 = 1e-10 # Threshold below which densities are zeroed out
 end
 
-"""
+function calculate_total_electrons(μ, p::MFParams, nup, ndown)
+    """
     calculate_total_electrons(μ, p::MFParams, nup, ndown)
 
-Calculates the total number of electrons per unit cell for a given chemical potential μ,
-using the current mean-field densities nup and ndown.
-"""
-function calculate_total_electrons(μ, p::MFParams, nup, ndown)
+    Calculates the total number of electrons per unit cell (2 sites) for a given chemical potential `μ`,
+    using the current mean-field densities `nup` (⟨n₁↑⟩, ⟨n₂↑⟩) and `ndown` (⟨n₁↓⟩, ⟨n₂↓⟩).
+    Integrates the Fermi-Dirac distribution over the Brillouin zone using `p.Nk` x `p.Nk` k-points.
+
+    Args:
+        μ (Float64): The chemical potential.
+        p (MFParams): Mean-field parameters.
+        nup (Vector{Float64}): Current spin-up densities on sublattices [A, B].
+        ndown (Vector{Float64}): Current spin-down densities on sublattices [A, B].
+
+    Returns:
+        Float64: The calculated total electron density per unit cell (ranging from 0 to 4).
+    """
     total_ne = 0.0
     # Use LinRange for periodic grid, excluding endpoint 2π
     ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
@@ -56,14 +66,28 @@ function calculate_total_electrons(μ, p::MFParams, nup, ndown)
     return total_ne / (p.Nk * p.Nk) # More direct calculation
 end
 
-"""
+
+function find_mu(p::MFParams, nup, ndown; μ_tol=1e-8, max_μ_iter=100)
+    """
     find_mu(p::MFParams, nup, ndown; μ_tol=1e-8, max_μ_iter=100)
 
-Finds the chemical potential μ such that the calculated total electron density
-matches the target density p.ne * 2 (for the two-site unit cell), using bisection.
-"""
-# Find chemical potential μ that yields target density = 2⋅ne via robust bisection with dynamic bracket expansion
-function find_mu(p::MFParams, nup, ndown; μ_tol=1e-8, max_μ_iter=100)
+    Finds the chemical potential `μ` such that the calculated total electron density per unit cell
+    matches the target density `p.ne * 2`, using the current mean-field densities `nup` and `ndown`.
+    Employs a robust bisection method with dynamic bracket expansion.
+
+    Args:
+        p (MFParams): Mean-field parameters.
+        nup (Vector{Float64}): Current spin-up densities on sublattices [A, B].
+        ndown (Vector{Float64}): Current spin-down densities on sublattices [A, B].
+        μ_tol (Float64, optional): Tolerance for convergence on `μ` or density. Defaults to 1e-8.
+        max_μ_iter (Int, optional): Maximum iterations for the bisection search. Defaults to 100.
+
+    Returns:
+        Float64: The converged chemical potential `μ`.
+
+    Raises:
+        Error: If the target density cannot be bracketed within the expanded `μ` range.
+    """
     target_ne = p.ne * 2.0
 
     # initial bracket based on band edges
@@ -127,14 +151,24 @@ function find_mu(p::MFParams, nup, ndown; μ_tol=1e-8, max_μ_iter=100)
     return final_mu
 end
 
-"""
+
+function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
+    """
   mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
 
-Builds the 2×2 mean‑field Hamiltonian H_kσ for spin σ at momentum k,
-using ⟨n̄ασ⟩ for the opposite‑spin densities on sublattices α=1,2.
-Uses standard square lattice hopping between sublattices.
-"""
-function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
+    Builds the 2×2 mean‑field Hamiltonian `H_kσ` for a given spin `σ` at momentum `k = (kx, ky)`,
+    using the opposite-spin densities `nbar = ⟨n̄₁, n̄₂⟩` on the two sublattices (A=1, B=2).
+    Assumes a square lattice with nearest-neighbor hopping `t` and on-site interaction `U`.
+
+    Args:
+        kx (Float64): k-vector x-component.
+        ky (Float64): k-vector y-component.
+        nbar (Vector{Float64}): Opposite-spin densities on sublattices [A, B].
+        p (MFParams): Mean-field parameters (uses `t` and `U`).
+
+    Returns:
+        Matrix{Float64}: The 2x2 mean-field Hamiltonian for the specified spin and k-point.
+    """
     # Standard square lattice hopping term between sublattices (assuming a=1)
     # Note the conventional minus sign for the hopping term.
     hopping_term = -p.t * (cos(kx) + cos(ky))
@@ -145,14 +179,31 @@ function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
     return H
 end
 
-"""
+
+function self_consistent_mf(p::MFParams; init=nothing)
+    """
   self_consistent_mf(p::MFParams; init = nothing)
 
-Runs the SCF loop to find ⟨nασ⟩ and the total energy per cell E = 
-∑_{k,j,σ} f(ε_{jσ}(k)) ε_{jσ}(k)  – U ∑_α ⟨nα↑⟩⟨nα↓⟩.
-Returns (n1↑,n2↑,n1↓,n2↓, E).
-"""
-function self_consistent_mf(p::MFParams; init=nothing)
+    Performs the self-consistent field (SCF) calculation for the two-site Hubbard model
+    within the mean-field approximation.
+    Iteratively updates the sublattice densities (n↑₁, n↑₂, n↓₁, n↓₂) until convergence or max iterations.
+    Calculates the chemical potential `μ` at each step to enforce the target filling `p.ne`.
+
+    Args:
+        p (MFParams): Structure containing all parameters for the calculation.
+        init (Tuple{Vector{Float64}, Vector{Float64}}, optional): Initial guess for (nup, ndown).
+            If `nothing`, starts with a paramagnetic guess based on `p.ne`. Defaults to `nothing`.
+
+    Returns:
+        Tuple{Vector{Float64}, Vector{Float64}, Float64}: A tuple containing:
+            - `nup`: Converged spin-up densities [⟨n₁↑⟩, ⟨n₂↑⟩].
+            - `ndown`: Converged spin-down densities [⟨n₁↓⟩, ⟨n₂↓⟩].
+            - `Etot`: Converged total energy per unit cell, including the double-counting correction.
+
+    Raises:
+        Error: If the SCF loop does not converge within `p.maxiter` iterations.
+    """
+    println("Starting SCF for U=$(params.U), ne=$(params.ne)...")
     # initialize densities: (n1↑, n2↑, n1↓, n2↓)
     if init === nothing
         nup = fill(p.ne/2, 2)
@@ -235,23 +286,34 @@ function self_consistent_mf(p::MFParams; init=nothing)
         # check convergence
         if maximum(abs.([nup .- nup_old; ndown .- ndown_old])) < p.tol # Compare with nup_old, ndown_old
             println("SCF converged in $iter iterations. μ = $µ") # Added convergence message with μ
+            println("Converged densities: n↑=", nup, ", n↓=", ndown, ", E=$Etot")
             return nup, ndown, Etot
         end
     end
     error("SCF did not converge in $(p.maxiter) iterations")
 end
 
-"""
+
+function compute_phase_diagram(ps::Vector{MFParams})
+    """
   compute_phase_diagram(ps::Vector{MFParams})
 
-Loops over a grid of (ne, U/t) to classify each point as PM, FM or AFM by comparing
-ground‑state energies under the three trial configurations:
-  • Paramagnetic:  n1↑=n2↑=n1↓=n2↓=ne/2
-  • Ferromagnetic: e.g. n1↑=n2↑=ne,  n1↓=n2↓=0
-  • Antiferromagnetic: n1↑=n2↓=nup, n1↓=n2↑=ndown
-Returns a matrix of phase labels.
-"""
-function compute_phase_diagram(ps::Vector{MFParams})
+    Computes the ground state phase (Paramagnetic, Ferromagnetic, or Antiferromagnetic)
+    for each set of parameters in the input vector `ps`.
+    For each parameter set, it runs SCF calculations starting from PM, FM, and AFM initial guesses
+    and determines the phase with the lowest converged total energy.
+
+    Args:
+        ps (Vector{MFParams}): A vector where each element is an `MFParams` struct defining
+            a point in the parameter space (e.g., varying U and ne).
+
+    Returns:
+        Vector{Int}: A vector of the same length as `ps`, where each element is an integer
+                    representing the ground state phase:
+                    - 1: Paramagnetic (PM)
+                    - 2: Ferromagnetic (FM)
+                    - 3: Antiferromagnetic (AFM)
+    """
     # Define phase mapping using integers directly if preferred
     phases = Dict(:PM=>1, :FM=>2, :AFM=>3) 
     phase_indices = [:PM, :FM, :AFM] # Map index back to symbol if needed
