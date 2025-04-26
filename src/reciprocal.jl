@@ -1,10 +1,14 @@
 # functions that compute bands and dos' for various occupation levels 
 module ReciprocalSpace
 
-using LinearAlgebra      # norm, Hermitian
-using Plots              
-using Statistics         
-using Printf             # For formatting output
+using LinearAlgebra 
+using SparseArrays
+using StatsBase
+using Plots
+using Statistics
+using Revise
+using Printf
+using Statistics
 
 using ..HInit             # Needed for HubbardParams in calculate_dispersion
 using ..MeanField          # bring mean-field functions into scope
@@ -12,31 +16,17 @@ using ..MeanField          # bring mean-field functions into scope
 export calculate_dispersion, 
        generate_k_path, 
        plot_dispersion, 
-       plot_bands,
        gamma_k,
-       get_bands,
-       # Export the constants
-       a, b1, b2, k,
-       t, Γ, X, M, KPATH,
-       plot_band_structure,
        calculate_bands, calculate_dos,
+       calculate_fermi_level, # Add new function
        gaussian_dos, 
        plot_dos, plot_bands
 
+# ----------------------------------------------------------------------------- #
+# --- High-Symmetry Points and Paths --- 
+
 
 # ----------------------------------------------------------------------------- #
-
-# Constants related to reciprocal space
-const a = 1.0  # Lattice constant
-const b1 = [1.0, 1.0]
-const b2 = [1.0, -1.0]
-const k = [0, 0]  # Default k-point
-const t = 1.0  # Default hopping parameter
-
-const Γ = [0.0, 0.0]
-const X = [π, 0.0]
-const M = [π, π]
-const KPATH = [Γ, X, M, Γ]
 # --- Helper Functions --- 
 
 function calculate_dispersion(params::HubbardParams, k_points)
@@ -58,7 +48,86 @@ function calculate_dispersion(params::HubbardParams, k_points)
     
     return energies
 end
+function generate_k_path(; 
+    points::Vector{Any} = [], 
+    labels::Vector{String} = String[], 
+    num_points_per_segment::Int = 50, 
+    supercell::Bool = false
+)
+    """
+    generate_k_path(; points, labels, num_points_per_segment=50, supercell=false)
 
+    - If `points` is empty, picks the default path:
+        • supercell=false: Γ–X–M–Γ
+        • supercell=true:  Γ_b–M_b–Γ_b–X_b–Γ_b
+    - If you pass `points`, you *must* also pass `labels` of the same length.
+    - Returns (k_path, k_dist, tick_positions, tick_labels).
+    """
+
+    # 1) Defaults if user didn’t supply points & labels
+    if isempty(points)
+        if supercell
+            points = [[0.0,0.0], [π,π], [0.0,0.0], [π,0.0], [0.0,0.0]]
+            labels = ["Γ_b","M_b","Γ_b","X_b","Γ_b"]
+        else
+            points = [[0.0,0.0], [π,0.0], [π,π], [0.0,0.0]]
+            labels = ["Γ","X","M","Γ"]
+        end
+    else
+        # 2) If user gave points, they must also give matching labels
+        if length(labels) != length(points)
+            error("When you pass `points`, you must also pass a `labels` array of the same length.")
+        end
+    end
+
+    # 3) Build the discrete path and distances
+    k_path = Tuple{Float64,Float64}[]
+    k_dist = Float64[0.0]
+    tick_positions = Float64[0.0]
+
+    current_dist = 0.0
+    n = num_points_per_segment
+
+    for i in 1:length(points)-1
+        p1 = points[i]
+        p2 = points[i+1]
+        Δ = p2 .- p1
+
+        # for the last segment include endpoint exactly once
+        steps = (i == length(points)-1) ? 0 : n-1
+        for s in 0:n
+            t = s/n
+            kx, ky = p1 .+ t .* Δ
+            if (i==1 && s==0)
+                push!(k_path,(kx,ky))
+            elseif s>0
+                push!(k_path,(kx,ky))
+                prev = k_path[end-1]
+                d = hypot(kx-prev[1], ky-prev[2])
+                current_dist += d
+                push!(k_dist, current_dist)
+            end
+        end
+
+        push!(tick_positions, current_dist)
+    end
+
+    # 4) Sanity-check
+    if length(k_path) != length(k_dist)
+        # recompute distances if something went awry
+        k_dist = zeros(length(k_path))
+        for j in 2:length(k_path)
+            k_dist[j] = k_dist[j-1] + hypot(
+                k_path[j][1]-k_path[j-1][1],
+                k_path[j][2]-k_path[j-1][2]
+            )
+        end
+    end
+
+    return k_path, k_dist, tick_positions, labels
+end
+
+#=
 function generate_k_path(points, num_points_per_segment=50)
     """
     generate_k_path(points, num_points_per_segment=50)
@@ -80,7 +149,14 @@ function generate_k_path(points, num_points_per_segment=50)
     k_dist = [0.0] # Start distance at 0
     tick_positions = [0.0]
     # Simple labeling for now, could be made more general
-    point_labels = ["Γ", "X", "M", "Γ", "Y", "Z"] # Extend as needed
+    # Adjust labels based on the input path points
+    if points == KPATH
+        point_labels = ["Γ", "X", "M", "Γ"]
+    elseif points == KPATH_B
+        point_labels = ["Γ_b", "X_b", "Γ_b", "M_b", "Γ_"] # Use primes for AFM path points
+    else
+        point_labels = ["P$i" for i in 1:length(points)] # Generic labels
+    end
     tick_labels = [point_labels[i] for i in 1:length(points)]
 
     current_dist = 0.0
@@ -123,15 +199,13 @@ function generate_k_path(points, num_points_per_segment=50)
 
     return k_path, k_dist, tick_positions, tick_labels
 end
-
-gamma_k(kvec, b1, b2) = -(1 + exp(-im * dot(kvec, b1)) + exp(-im * dot(kvec, b2)) + exp(-im * dot(kvec, b1 + b2)))
-
-function gaussian_dos(energies, ω_grid, σ)
+=#
+function gaussian_dos(energies, ω_grid, σ::Float64)
     """
     gaussian_dos(energies, ω_grid, σ)
 
     Calculates the Density of States (DOS) using Gaussian broadening.
-    (Same as in fig52.jl)
+    Normalized to give DOS per single unit cell per spin.
     """
     dos = zeros(length(ω_grid))
     if isempty(energies)
@@ -142,40 +216,123 @@ function gaussian_dos(energies, ω_grid, σ)
         ω = ω_grid[i]
         dos[i] = sum(norm_factor * exp.(-0.5 .* ((ω .- energies) ./ σ).^2))
     end
-    Nk_sq = round(Int, sqrt(length(energies)/2)) # Infer Nk_dos*Nk_dos
-    if Nk_sq > 0
-         dos ./= Nk_sq # Normalize by number of k-points
+    # length(energies) = Nk_dos * Nk_dos * num_bands (which is 2 for the double cell)
+    # Normalize by total k-points (Nk_dos*Nk_dos = length(energies)/2) and number of sites (2)
+    total_k_points_times_sites = length(energies) 
+    if total_k_points_times_sites > 0
+         dos ./= total_k_points_times_sites # Normalize to per site (single cell), per spin
     end
     return dos
 end
+
 # ---------------------------------------------------
 # --- Core Calculation Functions --- ------------------
 # --------------------------------------------------
-function calculate_bands(params::MFParams, nup, ndown, k_path)
-    """
-    calculate_bands(params::MFParams, nup, ndown, k_path)
 
-    Calculates band structure eigenvalues along a given k-path.
-    Returns eigenvalues for spin up (em_up) and spin down (em_dn).
+function calculate_fermi_level(params::MFParams, nup, ndown; Nk_grid=50)
     """
-    println("Calculating band structure...")
-    evals_up(p, ndn) = [eigvals(Hermitian(mean_field_hamiltonian(kx, ky, ndn, p))) for (kx, ky) in k_path]
-    evals_dn(p, nup) = [eigvals(Hermitian(mean_field_hamiltonian(kx, ky, nup, p))) for (kx, ky) in k_path]
-    
-    em_up = evals_up(params, ndown)
-    em_dn = evals_dn(params, nup)
-    println("Band structure calculation complete.")
-    return em_up, em_dn
+    calculate_fermi_level(params::MFParams, nup, ndown; Nk_grid=50)
+
+    Calculates the Fermi level (chemical potential at T=0) required to achieve
+    the target occupations nup and ndown.
+
+    Args:
+        params: Mean-field parameters.
+        nup: Target average occupation per site for spin up.
+        ndown: Target average occupation per site for spin down.
+        Nk_grid: The size of the k-point grid (Nk_grid x Nk_grid) used for calculation.
+
+    Returns:
+        E_F: The calculated Fermi level.
+    """
+    println("Calculating Fermi level on $Nk_grid x $Nk_grid grid...")
+    kx_grid = LinRange(0, 2π * (1 - 1/Nk_grid), Nk_grid)
+    ky_grid = LinRange(0, 2π * (1 - 1/Nk_grid), Nk_grid)
+    grid = [(kx, ky) for kx in kx_grid, ky in ky_grid]
+
+    # Calculate all eigenvalues
+    println("  Calculating eigenvalues for Fermi level...")
+    # Note: Pass n_opposite_spin to mean_field_hamiltonian
+    all_energies_up = vcat([eigvals(Hermitian(mean_field_hamiltonian(kx, ky, ndown, params))) for (kx, ky) in grid]...)
+    all_energies_dn = vcat([eigvals(Hermitian(mean_field_hamiltonian(kx, ky, nup, params))) for (kx, ky) in grid]...)
+    all_energies = vcat(all_energies_up, all_energies_dn)
+
+    if isempty(all_energies)
+        println("  Warning: No eigenvalues found for Fermi level calculation.")
+        return 0.0 # Default Fermi level if no states
+    end
+
+    # Sort energies
+    sort!(all_energies)
+    N_states = length(all_energies)
+
+    # Determine number of electrons based on filling per site and number of k-points.
+    # Assumes Nk_grid*Nk_grid is the number of k-points in the BZ being sampled.
+    # The number of electrons to accommodate in the calculated states.
+    num_k_points = Nk_grid * Nk_grid
+    # This definition assumes the total number of electrons corresponds directly to the number of states to fill,
+    # based on the total filling (nup + ndown) relative to the number of k-points sampled.
+    # This interpretation might need adjustment depending on the exact structure
+    # of the mean-field Hamiltonian (e.g., number of bands, unit cell doubling).
+    idx_fermi = round(Int, mean(nup .+ ndown) * num_k_points)
+
+    # Clamp index to valid range
+    idx_fermi = max(1, min(N_states, idx_fermi))
+
+    # Estimate Fermi level (e.g., midpoint between occupied and unoccupied)
+    E_F = 0.0
+    if N_states == 0
+        E_F = 0.0
+    elseif idx_fermi == N_states
+        E_F = all_energies[N_states] # System is full
+    elseif idx_fermi == 0
+        E_F = all_energies[1] # System is empty (use lowest state energy)
+    else
+        # Midpoint between highest occupied and lowest unoccupied state
+        E_F = (all_energies[idx_fermi] + all_energies[idx_fermi + 1]) / 2.0
+    end
+
+    println("  Calculated Fermi level E_F = $E_F for nup=$nup, ndown=$ndown")
+    return E_F
 end
 
-function calculate_dos(params::MFParams, nup, ndown; 
+function calculate_bands(params::MFParams, nup, ndown, k_path; E_F::Float64 = 0.0)
+    """
+    calculate_bands(params::MFParams, nup, ndown, k_path; E_F=0.0)
+
+    Calculates band structure eigenvalues along a given k-path.
+    Optionally shifts eigenvalues so the Fermi level E_F is at zero.
+
+    Returns eigenvalues for spin up (em_up) and spin down (em_dn), shifted if E_F is provided.
+    """
+    println("Calculating band structure...")
+    # Note: Pass n_opposite_spin to mean_field_hamiltonian
+    evals_up(p, ndn) = [sort(eigvals(Hermitian(mean_field_hamiltonian(kx, ky, ndn, p)))) for (kx, ky) in k_path]
+    evals_dn(p, nup) = [sort(eigvals(Hermitian(mean_field_hamiltonian(kx, ky, nup, p)))) for (kx, ky) in k_path]
+
+    em_up = evals_up(params, ndown)
+    em_dn = evals_dn(params, nup)
+
+    # Shift energies by -E_F
+    shifted_em_up = [[e - E_F for e in evals] for evals in em_up] # Equivalent list comprehension
+    shifted_em_dn = [[e - E_F for e in evals] for evals in em_dn] # Equivalent list comprehension
+
+    println("Band structure calculation complete. Energies shifted by E_F = $E_F.")
+    return shifted_em_up, shifted_em_dn
+end
+
+function calculate_dos(params::MFParams, nup, ndown;
+                       E_F::Float64 = 0.0, # Add E_F argument
                        Nk_dos=500, dos_smearing_sigma=0.05, dos_energy_points=400)
     """
-    calculate_dos(params::MFParams, nup, ndown; 
+    calculate_dos(params::MFParams, nup, ndown; E_F=0.0,
                   Nk_dos=500, dos_smearing_sigma=0.05, dos_energy_points=400)
 
     Calculates the Density of States given occupation numbers and standard parameter set (DOS).
+    Optionally shifts the energy axis so the Fermi level E_F is at zero.
+
     Returns the energy grid (ω_grid) and DOS for spin up/down (dos_up, dos_dn).
+    The energy grid is centered around the shifted energies.
     """
     println("\nCalculating DOS on $Nk_dos x $Nk_dos grid...")
     # generate the Brillouin zone grid
@@ -185,35 +342,46 @@ function calculate_dos(params::MFParams, nup, ndown;
 
     # Calculate raw eigenvalues for DOS
     println("Calculating eigenvalues...")
+    # Note: Pass n_opposite_spin to mean_field_hamiltonian
     raw_dos_up_func(p, ndn) = vcat([eigvals(Hermitian(mean_field_hamiltonian(kx, ky, ndn, p))) for (kx, ky) in grid]...)
     raw_dos_dn_func(p, nup) = vcat([eigvals(Hermitian(mean_field_hamiltonian(kx, ky, nup, p))) for (kx, ky) in grid]...)
     raw_dos_up = raw_dos_up_func(params, ndown)
     raw_dos_dn = raw_dos_dn_func(params, nup)
 
-    # Determine energy range and calculate broadened DOS
-    all_energies = vcat(raw_dos_up, raw_dos_dn)
+    # Shift raw energies by -E_F
+    println("Shifting DOS energies by E_F = $E_F...")
+    raw_dos_up .-= E_F
+    raw_dos_dn .-= E_F
+
+    # Determine energy range and calculate broadened DOS based on *shifted* energies
+    all_shifted_energies = vcat(raw_dos_up, raw_dos_dn)
     # Handle case where one spin channel might be empty (e.g., perfect FM)
-    if isempty(all_energies)
+    if isempty(all_shifted_energies)
         println("  Warning: No eigenvalues found for DOS calculation.")
         # Return empty results or handle as appropriate
-        ω_grid = LinRange(0, 1, dos_energy_points) # Default grid
+        # Define a default grid centered around 0 (the shifted E_F)
+        ω_grid = LinRange(-1.0, 1.0, dos_energy_points)
         return ω_grid, zeros(dos_energy_points), zeros(dos_energy_points)
     end
-    min_E, max_E = minimum(all_energies), maximum(all_energies)
+    min_E, max_E = minimum(all_shifted_energies), maximum(all_shifted_energies)
+    # Define omega grid around the shifted energies, centered near 0
     ω_grid = LinRange(min_E - 5*dos_smearing_sigma, max_E + 5*dos_smearing_sigma, dos_energy_points)
 
-    println("Calculating broadened DOS (σ = $dos_smearing_sigma)...")
+    println("Calculating broadened DOS (σ = $dos_smearing_sigma) with shifted energies...")
+    # Use shifted energies to calculate DOS on the new grid
     dos_up = gaussian_dos(raw_dos_up, ω_grid, dos_smearing_sigma)
     dos_dn = gaussian_dos(raw_dos_dn, ω_grid, dos_smearing_sigma)
     println("DOS calculation complete.")
 
+    # Return the shifted energy grid and corresponding DOS
     return ω_grid, dos_up, dos_dn
 end
 
 # --------------------------------------------------------
 # --- Plotting Functions ---------------------------------
 # --------------------------------------------------------
-function plot_bands(kdist, em_up, em_dn, title_str,  tick_positions, tick_labels)
+function plot_bands(kdist, em_up, em_dn, title_str::String, 
+    tick_positions, tick_labels; download = true)
     """
     plot_bands(kdist, em_up, em_dn, title_str, tick_positions, tick_labels)
 
@@ -264,10 +432,11 @@ function plot_bands(kdist, em_up, em_dn, title_str,  tick_positions, tick_labels
     end
     
     display(p)
-    savefig(p, title_str * ".png")
+    # save plot as PNG if download is true
+    download && savefig(p, "FM_band.png")
 end
 
-function plot_dos(ω_grid, dos1, dos2=[], title_str="Density of States")
+function plot_dos(ω_grid, dos1; dos2=[], title_str="Density of States", download = false)
     """
     plot_dos(ω_grid, dos1, dos2, title_str)
 
@@ -275,15 +444,16 @@ function plot_dos(ω_grid, dos1, dos2=[], title_str="Density of States")
     The first dos argument is labeled as spin up on the plot.
     """
     # Plot spin up
-    p = plot(ω_grid, dos1, label="DOS ↑", color=:red, linewidth=2)
+    p = plot(ω_grid, dos1, label="DOS ↑", color=:blue, linewidth=2)
     xlabel!(p, "Energy (t units)")
     ylabel!(p, "ρ(ε)")
     title!(p, "$title_str (Spin Up and Spin Down)")
 
     # Plot spin down if given
-    !isempty(dos2) && plot!(ω_grid, dos2, label="DOS ↓", color=:blue, linewidth=2)
+    !isempty(dos2) && plot!(ω_grid, dos2, label="DOS ↓", color=:red, linewidth=2)
     display(p)
-    savefig(p, "$(title_str).png")
+
+    download && savefig(p, "$(title_str).png")
 end
 
 

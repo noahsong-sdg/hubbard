@@ -1,10 +1,16 @@
 module MeanField
 
-using LinearAlgebra
+using LinearAlgebra 
+using SparseArrays
+using StatsBase
+using Plots
+using Statistics
+using Revise
+using Printf
 using Statistics
 using Parameters
+
 # Use '..' to access modules in the parent directory/scope
-include("hubbardinit.jl") # Include the HubbardInit module
 using ..HInit             
 
 export MFParams, self_consistent_mf, compute_phase_diagram, mean_field_hamiltonian
@@ -151,6 +157,7 @@ function find_mu(p::MFParams, nup, ndown; μ_tol=1e-8, max_μ_iter=100)
     return final_mu
 end
 
+gamma_k(kvec) = -(1 + exp(-im * dot(kvec, b1)) + exp(-im * dot(kvec, b2)) + exp(-im * dot(kvec, b1 + b2)))
 
 function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
     """
@@ -171,11 +178,11 @@ function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
     """
     # Standard square lattice hopping term between sublattices (assuming a=1)
     # Note the conventional minus sign for the hopping term.
-    hopping_term = -p.t * (cos(kx) + cos(ky))
+    offdiag = p.t * gamma_k([kx, ky]) # Divide by 4 for two sites
 
     # diagonal entries: U * ⟨n̄_A⟩ and U * ⟨n̄_B⟩ (nbar[1] and nbar[2])
-    H = [ p.U*nbar[1]     hopping_term
-          conj(hopping_term)  p.U*nbar[2] ] # Hopping term is real here
+    H = [ p.U*nbar[1]     offdiag
+          conj(offdiag)  p.U*nbar[2] ] # Hopping term is real here
     return H
 end
 

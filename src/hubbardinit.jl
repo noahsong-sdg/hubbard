@@ -1,9 +1,13 @@
 module HInit
 
-using LinearAlgebra
+using LinearAlgebra 
 using SparseArrays
+using StatsBase
 using Plots
-using Statistics 
+using Statistics
+using Revise
+using Printf
+using Statistics
 
 export HubbardParams, 
        create_basis, 
@@ -19,7 +23,32 @@ export HubbardParams,
        analytical_charge_gap,
        analytical_double_occupancy,
        calculate_critical_point,
-       calculate_dispersion
+       calculate_dispersion,
+       a, b1, b2, k,
+       t, Γ, X, M, KPATH, KPATH_B
+
+
+# Constants related to reciprocal space
+const a = 1.0  # Lattice constant
+const b1 = [1.0, 1.0]
+const b2 = [1.0, -1.0]
+const k = [0, 0]  # Default k-point
+const t = 1.0  # Default hopping parameter
+
+#edge = pi / sqrt(2)
+const Γ = [0.0, 0.0]
+const X = [pi, 0.0]
+const M = [pi, pi] 
+const KPATH = [Γ, X, M, Γ]
+
+# High-symmetry points for the original Brillouin Zone
+
+# High-symmetry points for the magnetic Brillouin Zone (AFM state)
+# These correspond to folding the original BZ.
+const Γ_b = [0.0, 0.0]   # Same as Γ
+const X_b = [π, π] # Center of the edge of the original BZ face
+const M_b = [π, 0.0]   # Same as X in the original BZ
+const KPATH_B = [Γ_b, X_b, Γ_b, M_b, Γ_b] # Path for AFM state
 
 # System parameters
 struct HubbardParams
