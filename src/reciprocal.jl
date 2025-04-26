@@ -381,7 +381,7 @@ end
 # --- Plotting Functions ---------------------------------
 # --------------------------------------------------------
 function plot_bands(kdist, em_up, em_dn, title_str::String, 
-    tick_positions, tick_labels; download = true)
+    tick_positions, tick_labels; download = true, E_F = 0.0)
     """
     plot_bands(kdist, em_up, em_dn, title_str, tick_positions, tick_labels)
 
@@ -430,7 +430,7 @@ function plot_bands(kdist, em_up, em_dn, title_str::String,
         max_y = ceil(maximum(maximum.(all_em))) + 1
         ylims!(p, min_y, max_y)
     end
-    
+    hline!([E_F], label="E_F = $E_F", color=:black, linestyle=:dash, linewidth=2)
     display(p)
     # save plot as PNG if download is true
     download && savefig(p, "FM_band.png")
