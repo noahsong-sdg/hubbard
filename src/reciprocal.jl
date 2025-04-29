@@ -127,79 +127,6 @@ function generate_k_path(;
     return k_path, k_dist, tick_positions, labels
 end
 
-#=
-function generate_k_path(points, num_points_per_segment=50)
-    """
-    generate_k_path(points, num_points_per_segment=50)
-
-    Generates a list of k-points interpolating linearly between the given `points`.
-    Also calculates the cumulative distance along the path.
-
-    Args:
-        points: A list of k-space coordinates (e.g., [[0,0], [π,0], [π,π], [0,0]]).
-        num_points_per_segment: Number of points to generate for each segment between consecutive points in `points`.
-
-    Returns:
-        k_path: A vector of k-point coordinates (tuples).
-        k_dist: A vector of cumulative distances corresponding to each point in `k_path`.
-        tick_positions: A vector of distances corresponding to the input high-symmetry `points`.
-        tick_labels: A vector of labels for the high-symmetry points (currently hardcoded for Γ, X, M).
-    """ 
-    k_path = []
-    k_dist = [0.0] # Start distance at 0
-    tick_positions = [0.0]
-    # Simple labeling for now, could be made more general
-    # Adjust labels based on the input path points
-    if points == KPATH
-        point_labels = ["Γ", "X", "M", "Γ"]
-    elseif points == KPATH_B
-        point_labels = ["Γ_b", "X_b", "Γ_b", "M_b", "Γ_"] # Use primes for AFM path points
-    else
-        point_labels = ["P$i" for i in 1:length(points)] # Generic labels
-    end
-    tick_labels = [point_labels[i] for i in 1:length(points)]
-
-    current_dist = 0.0
-    # Iterate through segments defined by consecutive points
-    for i in 1:(length(points)-1)
-        p1 = points[i]
-        p2 = points[i+1]
-        segment_vec = p2 .- p1
-        segment_len = norm(segment_vec)
-
-        # Generate points along the segment using LinRange
-        # Exclude the last point (t=1.0) to avoid duplication with the start of the next segment
-        num_steps = (i == length(points) - 1) ? num_points_per_segment : num_points_per_segment -1
-        for step in 0:num_steps
-            t = step / num_points_per_segment
-            k = p1 .+ t .* segment_vec
-            # Add the first point of the first segment, or points from subsequent steps
-            if i == 1 && step == 0
-                push!(k_path, tuple(k...))
-            elseif step > 0
-                 push!(k_path, tuple(k...))
-                 # Calculate distance from the previous point in the path
-                 dist_step = norm(k .- k_path[end-1])
-                 current_dist += dist_step
-                 push!(k_dist, current_dist)
-            end
-        end
-        # Store the position of the high-symmetry point at the end of the segment
-        push!(tick_positions, current_dist)
-    end
-
-    # Ensure k_dist has the same length as k_path
-    if length(k_dist) != length(k_path)
-       println("Warning: k_dist and k_path length mismatch. Recalculating k_dist.")
-       k_dist = [0.0]
-       for idx = 2:length(k_path)
-           push!(k_dist, k_dist[end] + norm(k_path[idx] .- k_path[idx-1]))
-       end
-    end
-
-    return k_path, k_dist, tick_positions, tick_labels
-end
-=#
 function gaussian_dos(energies, ω_grid, σ::Float64)
     """
     gaussian_dos(energies, ω_grid, σ)
@@ -367,8 +294,6 @@ function calculate_dos(params::MFParams, nup, ndown;
     # Define omega grid around the shifted energies, centered near 0
     ω_grid = LinRange(min_E - 5*dos_smearing_sigma, max_E + 5*dos_smearing_sigma, dos_energy_points)
 
-    println("Calculating broadened DOS (σ = $dos_smearing_sigma) with shifted energies...")
-    # Use shifted energies to calculate DOS on the new grid
     dos_up = gaussian_dos(raw_dos_up, ω_grid, dos_smearing_sigma)
     dos_dn = gaussian_dos(raw_dos_dn, ω_grid, dos_smearing_sigma)
     println("DOS calculation complete.")

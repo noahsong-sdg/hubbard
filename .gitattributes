@@ -1,2 +1,2 @@
-*ipynb linguist-documentation=True
+#*ipynb linguist-documentation=True
 *.jl linguist-language=Julia
