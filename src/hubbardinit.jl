@@ -1,4 +1,5 @@
-module HInit
+# Hubbard model initialization and basic functions
+# This file is included directly into HubbardModel module
 
 using LinearAlgebra 
 using SparseArrays
@@ -7,26 +8,6 @@ using Plots
 using Statistics
 using Revise
 using Printf
-using Statistics
-
-export HubbardParams, 
-       create_basis, 
-       build_hamiltonian, 
-       calculate_site_occupations, 
-       calculate_spin_correlation,
-       plot_occupations, 
-       plot_spin_correlation,
-       calculate_double_occupancy,
-       calculate_charge_gap,
-       validate_mott_transition,
-       plot_mott_transition,
-       analytical_charge_gap,
-       analytical_double_occupancy,
-       calculate_critical_point,
-       calculate_dispersion,
-       a, b1, b2, k,
-       t, Γ, X, M, KPATH, KPATH_B
-
 
 # Constants related to reciprocal space
 const a = 1.0  # Lattice constant
@@ -55,8 +36,23 @@ struct HubbardParams
     L::Int      # Number of sites
     N_up::Int   # Number of up-spin electrons
     N_dn::Int   # Number of down-spin electrons
-    t::Float64  # Hopping strength
+    t::Float64  # Hopping strength (legacy, keep for compatibility)
     U::Float64  # On-site interaction
+    # SSH-specific parameters
+    t1::Float64 # Strong bond hopping
+    t2::Float64 # Weak bond hopping  
+    open_boundary::Bool # true for OBC, false for PBC
+end
+
+# Constructors for backward compatibility
+function HubbardParams(L::Int, N_up::Int, N_dn::Int, t::Float64, U::Float64)
+    # Legacy constructor - sets SSH parameters to match uniform hopping
+    return HubbardParams(L, N_up, N_dn, t, U, t, t, false)
+end
+
+function HubbardParams(L::Int, N_up::Int, N_dn::Int, t::Float64, U::Float64, t1::Float64, t2::Float64, open_boundary::Bool)
+    # Full constructor with SSH parameters
+    return HubbardParams(L, N_up, N_dn, t, U, t1, t2, open_boundary)
 end
 
 """
@@ -125,27 +121,58 @@ function build_hamiltonian(params::HubbardParams)
     for (i_up, up) in enumerate(up_basis)
         for (i_dn, dn) in enumerate(dn_basis)
             for site in 1:params.L
-                next_site = site % params.L + 1
-                
-                if (up & (1 << (site-1))) != 0 && (up & (1 << (next_site-1))) == 0
-                    new_up = up ⊻ (1 << (site-1)) ⊻ (1 << (next_site-1))
-                    j_up = findfirst(==(new_up), up_basis)
-                    if j_up !== nothing
-                        idx1 = (i_up-1)*length(dn_basis) + i_dn
-                        idx2 = (j_up-1)*length(dn_basis) + i_dn
-                        H[idx1, idx2] -= params.t
-                        H[idx2, idx1] -= params.t
+                # Handle SSH vs standard hopping
+                if params.t1 != params.t2
+                    # SSH mode: two-site unit cell
+                    # Sites are grouped as (1,2), (3,4), (5,6), etc.
+                    # Within each unit cell: t1 between sites
+                    # Between unit cells: t2 between sites
+                    unit_cell = div(site - 1, 2) + 1
+                    position_in_cell = mod(site - 1, 2) + 1
+                    
+                    if position_in_cell == 1
+                        # First site in unit cell: connect to second site with t1
+                        next_site = site + 1
+                        t_hop = params.t1
+                    else
+                        # Second site in unit cell: connect to next unit cell with t2
+                        if params.open_boundary && unit_cell == div(params.L, 2)
+                            continue  # Skip last inter-unit-cell bond for OBC
+                        end
+                        next_site = params.open_boundary ? site + 1 : (site % params.L) + 1
+                        t_hop = params.t2
                     end
+                else
+                    # Legacy mode: uniform hopping
+                    t_hop = params.t
+                    if params.open_boundary && site == params.L
+                        continue  # Skip last bond for OBC
+                    end
+                    next_site = params.open_boundary ? site + 1 : site % params.L + 1
                 end
                 
-                if (dn & (1 << (site-1))) != 0 && (dn & (1 << (next_site-1))) == 0
-                    new_dn = dn ⊻ (1 << (site-1)) ⊻ (1 << (next_site-1))
-                    j_dn = findfirst(==(new_dn), dn_basis)
-                    if j_dn !== nothing
-                        idx1 = (i_up-1)*length(dn_basis) + i_dn
-                        idx2 = (i_up-1)*length(dn_basis) + j_dn
-                        H[idx1, idx2] -= params.t
-                        H[idx2, idx1] -= params.t
+                # Only proceed if next_site is valid
+                if next_site <= params.L
+                    if (up & (1 << (site-1))) != 0 && (up & (1 << (next_site-1))) == 0
+                        new_up = up ⊻ (1 << (site-1)) ⊻ (1 << (next_site-1))
+                        j_up = findfirst(==(new_up), up_basis)
+                        if j_up !== nothing
+                            idx1 = (i_up-1)*length(dn_basis) + i_dn
+                            idx2 = (j_up-1)*length(dn_basis) + i_dn
+                            H[idx1, idx2] -= t_hop
+                            H[idx2, idx1] -= t_hop
+                        end
+                    end
+                    
+                    if (dn & (1 << (site-1))) != 0 && (dn & (1 << (next_site-1))) == 0
+                        new_dn = dn ⊻ (1 << (site-1)) ⊻ (1 << (next_site-1))
+                        j_dn = findfirst(==(new_dn), dn_basis)
+                        if j_dn !== nothing
+                            idx1 = (i_up-1)*length(dn_basis) + i_dn
+                            idx2 = (i_up-1)*length(dn_basis) + j_dn
+                            H[idx1, idx2] -= t_hop
+                            H[idx2, idx1] -= t_hop
+                        end
                     end
                 end
             end
@@ -498,5 +525,3 @@ function plot_mott_transition(U_t_values, charge_gaps, double_occs, validation_r
 
     return plot(p1, p2, p3, layout=(3,1), size=(800, 900), legend=true)
 end
-
-end # module

@@ -1,4 +1,5 @@
-module MeanField
+# Mean field theory implementation for Hubbard model
+# This file is included directly into HubbardModel module
 
 using LinearAlgebra 
 using SparseArrays
@@ -7,17 +8,11 @@ using Plots
 using Statistics
 using Revise
 using Printf
-using Statistics
 using Parameters
-
-# Use '..' to access modules in the parent directory/scope
-using ..HInit             
-
-export MFParams, self_consistent_mf, compute_phase_diagram, mean_field_hamiltonian
 
 @with_kw struct MFParams
     U::Float64            # on‑site repulsion
-    t::Float64            # hopping
+    t::Float64            # hopping (legacy, keep for compatibility)
     ne::Float64           # electrons per site (target filling for the 2-site unit cell is 2*ne)
     Nk::Int               # number of k‑points per direction for BZ integration
     β::Float64            # inverse temperature (for Fermi-Dirac smearing)
@@ -26,15 +21,17 @@ export MFParams, self_consistent_mf, compute_phase_diagram, mean_field_hamiltoni
     maxμexpansions::Int = 10 # Max attempts to expand μ bracket in find_mu
     mixing_alpha::Float64 = 0.5 # Linear mixing parameter for density updates (0 < alpha <= 1)
     density_threshold::Float64 = 1e-10 # Threshold below which densities are zeroed out
+    # SSH-specific parameters
+    t1::Float64 = 1.0     # Strong bond hopping (SSH)
+    t2::Float64 = 1.0     # Weak bond hopping (SSH)
+    ssh_mode::Bool = false # Enable SSH mode (1D) vs standard mode (2D)
 end
 
 function calculate_total_electrons(μ, p::MFParams, nup, ndown)
     """
-    calculate_total_electrons(μ, p::MFParams, nup, ndown)
-
     Calculates the total number of electrons per unit cell (2 sites) for a given chemical potential `μ`,
     using the current mean-field densities `nup` (⟨n₁↑⟩, ⟨n₂↑⟩) and `ndown` (⟨n₁↓⟩, ⟨n₂↓⟩).
-    Integrates the Fermi-Dirac distribution over the Brillouin zone using `p.Nk` x `p.Nk` k-points.
+    Integrates the Fermi-Dirac distribution over the Brillouin zone using `p.Nk` x `p.Nk` k-points (2D) or `p.Nk` k-points (1D SSH).
 
     Args:
         μ (Float64): The chemical potential.
@@ -46,30 +43,58 @@ function calculate_total_electrons(μ, p::MFParams, nup, ndown)
         Float64: The calculated total electron density per unit cell (ranging from 0 to 4).
     """
     total_ne = 0.0
-    # Use LinRange for periodic grid, excluding endpoint 2π
-    ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
-    nk_tot = 0
+    
+    if p.ssh_mode
+        # SSH mode: 1D k-grid
+        ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
+        nk_tot = 0
 
-    for kx in ks, ky in ks
-        # Spin up
-        Hup = mean_field_hamiltonian(kx, ky, ndown, p) # Opposite spin density
-        # Ensure eigenvalues are real by treating H as Hermitian
-        eps_up, _ = eigen(Hermitian(Hup))
-        f_up = 1.0 ./ (exp.(p.β * (eps_up .- μ)) .+ 1.0)
-        total_ne += sum(f_up) # Sum over the two bands for spin up
+        for kx in ks
+            # Spin up
+            Hup = mean_field_hamiltonian_ssh(kx, ndown, p) # Opposite spin density
+            # Ensure eigenvalues are real by treating H as Hermitian
+            eps_up, _ = eigen(Hermitian(Hup))
+            f_up = 1.0 ./ (exp.(p.β * (eps_up .- μ)) .+ 1.0)
+            total_ne += sum(f_up) # Sum over the two bands for spin up
 
-        # Spin down
-        Hdown = mean_field_hamiltonian(kx, ky, nup, p) # Opposite spin density
-        # Ensure eigenvalues are real by treating H as Hermitian
-        eps_down, _ = eigen(Hermitian(Hdown))
-        f_down = 1.0 ./ (exp.(p.β * (eps_down .- μ)) .+ 1.0)
-        total_ne += sum(f_down) # Sum over the two bands for spin down
+            # Spin down
+            Hdown = mean_field_hamiltonian_ssh(kx, nup, p) # Opposite spin density
+            # Ensure eigenvalues are real by treating H as Hermitian
+            eps_down, _ = eigen(Hermitian(Hdown))
+            f_down = 1.0 ./ (exp.(p.β * (eps_down .- μ)) .+ 1.0)
+            total_ne += sum(f_down) # Sum over the two bands for spin down
 
-        nk_tot += 1
+            nk_tot += 1
+        end
+
+        # Average over k-points (total number is Nk)
+        return total_ne / p.Nk
+    else
+        # Standard mode: 2D k-grid
+        ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
+        nk_tot = 0
+
+        for kx in ks, ky in ks
+            # Spin up
+            Hup = mean_field_hamiltonian(kx, ky, ndown, p) # Opposite spin density
+            # Ensure eigenvalues are real by treating H as Hermitian
+            eps_up, _ = eigen(Hermitian(Hup))
+            f_up = 1.0 ./ (exp.(p.β * (eps_up .- μ)) .+ 1.0)
+            total_ne += sum(f_up) # Sum over the two bands for spin up
+
+            # Spin down
+            Hdown = mean_field_hamiltonian(kx, ky, nup, p) # Opposite spin density
+            # Ensure eigenvalues are real by treating H as Hermitian
+            eps_down, _ = eigen(Hermitian(Hdown))
+            f_down = 1.0 ./ (exp.(p.β * (eps_down .- μ)) .+ 1.0)
+            total_ne += sum(f_down) # Sum over the two bands for spin down
+
+            nk_tot += 1
+        end
+
+        # Average over k-points (total number is Nk*Nk)
+        return total_ne / (p.Nk * p.Nk) # More direct calculation
     end
-
-    # Average over k-points (total number is Nk*Nk)
-    return total_ne / (p.Nk * p.Nk) # More direct calculation
 end
 
 
@@ -186,6 +211,31 @@ function mean_field_hamiltonian(kx, ky, nbar, p::MFParams)
     return H
 end
 
+function mean_field_hamiltonian_ssh(kx, nbar, p::MFParams)
+    """
+  mean_field_hamiltonian_ssh(kx, nbar, p::MFParams)
+
+    Builds the 2×2 mean‑field Hamiltonian for SSH model at momentum `k = kx`,
+    using the opposite-spin densities `nbar = ⟨n̄₁, n̄₂⟩` on the two sublattices (A=1, B=2).
+    Assumes 1D SSH chain with alternating hoppings `t1`, `t2` and on-site interaction `U`.
+
+    Args:
+        kx (Float64): k-vector x-component (1D).
+        nbar (Vector{Float64}): Opposite-spin densities on sublattices [A, B].
+        p (MFParams): Mean-field parameters (uses `t1`, `t2` and `U`).
+
+    Returns:
+        Matrix{Float64}: The 2x2 SSH mean-field Hamiltonian for the specified spin and k-point.
+    """
+    # SSH off-diagonal: f(k) = t1 + t2 * exp(-ik)
+    offdiag = p.t1 + p.t2 * exp(-im * kx)
+
+    # diagonal entries: U * ⟨n̄_A⟩ and U * ⟨n̄_B⟩ (nbar[1] and nbar[2])
+    H = [ p.U*nbar[1]     offdiag
+          conj(offdiag)  p.U*nbar[2] ]
+    return H
+end
+
 
 function self_consistent_mf(p::MFParams; init=nothing)
     """
@@ -219,9 +269,14 @@ function self_consistent_mf(p::MFParams; init=nothing)
         nup, ndown = init
     end
 
-    # prepare k‑grid
-    # Use LinRange for periodic grid, excluding endpoint 2π
-    ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
+    # prepare k‑grid based on mode
+    if p.ssh_mode
+        # SSH mode: 1D k-grid
+        ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
+    else
+        # Standard mode: 2D k-grid
+        ks = LinRange(0, 2π * (1 - 1/p.Nk), p.Nk)
+    end
     µ = 0.0  # Initialize mu
 
     # Use 1:p.maxiter directly
@@ -237,28 +292,56 @@ function self_consistent_mf(p::MFParams; init=nothing)
         ndown_new = zeros(Float64, 2)
         Eband = 0.0
 
-        for kx in ks, ky in ks
-            # spin ↑: opposite densities = ndown
-            Hup = mean_field_hamiltonian(kx,ky, ndown, p)
-            # Ensure eigenvalues are real by treating H as Hermitian
-            eps_up, Vup = eigen(Hermitian(Hup))
-            # spin ↓: opposite densities = nup
-            Hdown = mean_field_hamiltonian(kx,ky, nup, p)
-            # Ensure eigenvalues are real by treating H as Hermitian
-            eps_down, Vdown = eigen(Hermitian(Hdown))
+        if p.ssh_mode
+            # SSH mode: 1D k-loop
+            for kx in ks
+                # spin ↑: opposite densities = ndown
+                Hup = mean_field_hamiltonian_ssh(kx, ndown, p)
+                # Ensure eigenvalues are real by treating H as Hermitian
+                eps_up, Vup = eigen(Hermitian(Hup))
+                # spin ↓: opposite densities = nup
+                Hdown = mean_field_hamiltonian_ssh(kx, nup, p)
+                # Ensure eigenvalues are real by treating H as Hermitian
+                eps_down, Vdown = eigen(Hermitian(Hdown))
 
-            for (εs, Vs, nacc) in ((eps_up,Vup,nup_new),(eps_down,Vdown,ndown_new))
-                # Apply chemical potential shift here for Fermi-Dirac
-                f = 1.0 ./ (exp.(p.β*(εs .- µ)) .+ 1.0)
-                # accumulate band energy
-                Eband += sum(εs .* f) # Sum energies weighted by occupation
-                #  |V[α,j]|^2 gives contribution of band j to sublattice α
-                # Use axes for robustness, although size is fixed at 2x2 here
-                for α in axes(Vs, 1), j in axes(Vs, 2)
-                    nacc[α] += abs2(Vs[α,j]) * f[j]
+                for (εs, Vs, nacc) in ((eps_up,Vup,nup_new),(eps_down,Vdown,ndown_new))
+                    # Apply chemical potential shift here for Fermi-Dirac
+                    f = 1.0 ./ (exp.(p.β*(εs .- µ)) .+ 1.0)
+                    # accumulate band energy
+                    Eband += sum(εs .* f) # Sum energies weighted by occupation
+                    #  |V[α,j]|^2 gives contribution of band j to sublattice α
+                    # Use axes for robustness, although size is fixed at 2x2 here
+                    for α in axes(Vs, 1), j in axes(Vs, 2)
+                        nacc[α] += abs2(Vs[α,j]) * f[j]
+                    end
                 end
+                nk += 1
             end
-            nk += 1
+        else
+            # Standard mode: 2D k-loop
+            for kx in ks, ky in ks
+                # spin ↑: opposite densities = ndown
+                Hup = mean_field_hamiltonian(kx,ky, ndown, p)
+                # Ensure eigenvalues are real by treating H as Hermitian
+                eps_up, Vup = eigen(Hermitian(Hup))
+                # spin ↓: opposite densities = nup
+                Hdown = mean_field_hamiltonian(kx,ky, nup, p)
+                # Ensure eigenvalues are real by treating H as Hermitian
+                eps_down, Vdown = eigen(Hermitian(Hdown))
+
+                for (εs, Vs, nacc) in ((eps_up,Vup,nup_new),(eps_down,Vdown,ndown_new))
+                    # Apply chemical potential shift here for Fermi-Dirac
+                    f = 1.0 ./ (exp.(p.β*(εs .- µ)) .+ 1.0)
+                    # accumulate band energy
+                    Eband += sum(εs .* f) # Sum energies weighted by occupation
+                    #  |V[α,j]|^2 gives contribution of band j to sublattice α
+                    # Use axes for robustness, although size is fixed at 2x2 here
+                    for α in axes(Vs, 1), j in axes(Vs, 2)
+                        nacc[α] += abs2(Vs[α,j]) * f[j]
+                    end
+                end
+                nk += 1
+            end
         end
 
         # normalize by number of k‑points
@@ -299,63 +382,4 @@ function self_consistent_mf(p::MFParams; init=nothing)
     end
     error("SCF did not converge in $(p.maxiter) iterations")
 end
-
-
-function compute_phase_diagram(ps::Vector{MFParams})
-    """
-  compute_phase_diagram(ps::Vector{MFParams})
-
-    Computes the ground state phase (Paramagnetic, Ferromagnetic, or Antiferromagnetic)
-    for each set of parameters in the input vector `ps`.
-    For each parameter set, it runs SCF calculations starting from PM, FM, and AFM initial guesses
-    and determines the phase with the lowest converged total energy.
-
-    Args:
-        ps (Vector{MFParams}): A vector where each element is an `MFParams` struct defining
-            a point in the parameter space (e.g., varying U and ne).
-
-    Returns:
-        Vector{Int}: A vector of the same length as `ps`, where each element is an integer
-                    representing the ground state phase:
-                    - 1: Paramagnetic (PM)
-                    - 2: Ferromagnetic (FM)
-                    - 3: Antiferromagnetic (AFM)
-    """
-    # Define phase mapping using integers directly if preferred
-    phases = Dict(:PM=>1, :FM=>2, :AFM=>3) 
-    phase_indices = [:PM, :FM, :AFM] # Map index back to symbol if needed
-
-    grid = fill(0, length(ps))
-    # Use eachindex for iterating over the parameter vector
-    for (i,p) in pairs(ps) # Use pairs for index and value
-        println("Calculating point $(i)/$(length(ps)): ne=$(p.ne), U=$(p.U)") # Progress
-        # PM
-        p_PM = p # No need to copy MFParams if it's immutable or not modified
-        nup_PM = fill(p.ne/2, 2); ndown_PM = copy(nup_PM) # Use copy if needed later
-        _,_,E_PM = self_consistent_mf(p_PM; init=(nup_PM, ndown_PM))
-
-        # FM
-        nup_FM = fill( p.ne, 2); ndown_FM = fill(0.0, 2) # Use 0.0
-        _,_,E_FM = self_consistent_mf(p; init=(nup_FM, ndown_FM))
-
-        # AFM
-        δ = 0.1 # Define delta for AFM seed
-        nup_AFM = [p.ne/2+δ, p.ne/2-δ]   
-        ndown_AFM = [p.ne/2-δ, p.ne/2+δ]
-        _,_,E_AFM = self_consistent_mf(p; init=(nup_AFM, ndown_AFM))
-
-        # pick lowest energy and assign phase index
-        Emin, phase_index = findmin([E_PM, E_FM, E_AFM])
-        grid[i] = phase_index # Assign the index (1, 2, or 3) directly
-        println("  -> Phase: $(phase_indices[phase_index]), E_PM=$E_PM, E_FM=$E_FM, E_AFM=$E_AFM")
-    end
-    return grid
-end
-
-end # module
-
-# ----------------------------------------------------------------------------
-# Test the module
-
-using Test
 

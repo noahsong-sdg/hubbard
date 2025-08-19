@@ -1,4 +1,4 @@
-module testset
+
 
 #########################################################
 ################### Mott Transition stuff#####################################
@@ -133,6 +133,7 @@ end
 ##############################################################################
 include("hubbardmodel.jl") # Adjust the path as necessary
 
+using .HubbardModel
 using .MeanField
 using LinearAlgebra # Needed for Hermitian
 
@@ -280,61 +281,83 @@ end
 ##############################################################################################
 ####################### reciprocal test functions################################
 ##############################################################################################
-println("Starting calculations...")
+#= println("Starting calculations...")
 
-    # --- Parameters --- 
-    t = 1.0
-    ne = 1.6
-    Ufm_val = t / 0.077
-    Uafm_val = t / 0.2
-    Nk_scf = 50       # K-points for SCF convergence
-    Nk_dos_grid = 500 # K-points per dim for DOS grid
-    beta = 1.0
-    scf_tol = 1e-6
-    scf_maxiter = 200
-    dos_sigma = 0.05
-    dos_points = 400
+# --- Parameters --- 
+t = 1.0
+ne = 1.6
+Ufm_val = t / 0.077
+Uafm_val = t / 0.2
+Nk_scf = 50       # K-points for SCF convergence
+Nk_dos_grid = 500 # K-points per dim for DOS grid
+beta = 1.0
+scf_tol = 1e-6
+scf_maxiter = 200
+dos_sigma = 0.05
+dos_points = 400
 
-    # --- Setup MFParams --- 
-    p_fm  = MFParams(U=Ufm_val,  t=t, ne=ne, Nk=Nk_scf, β=beta, tol=scf_tol, maxiter=scf_maxiter)
-    p_afm = MFParams(U=Uafm_val, t=t, ne=ne, Nk=Nk_scf, β=beta, tol=scf_tol, maxiter=scf_maxiter)
+# --- Setup MFParams --- 
+p_fm  = MFParams(U=Ufm_val,  t=t, ne=ne, Nk=Nk_scf, β=beta, tol=scf_tol, maxiter=scf_maxiter)
+p_afm = MFParams(U=Uafm_val, t=t, ne=ne, Nk=Nk_scf, β=beta, tol=scf_tol, maxiter=scf_maxiter)
 
-    # --- Calculate Band Structure for ferromagnetic and antiferromagnetic states ---
-    nup_fm = fill(0.8, 2)
-    ndown_fm = fill(0, 2)
-    nup_afm = [0.62, 0.18]
-    ndown_afm = [0.18, 0.62]
+# --- Calculate Band Structure for ferromagnetic and antiferromagnetic states ---
+nup_fm = fill(0.8, 2)
+ndown_fm = fill(0, 2)
+nup_afm = [0.62, 0.18]
+ndown_afm = [0.18, 0.62]
 
-    k_path, k_dist = define_k_path(Nk_bands) 
-    
-    em_fm_up, em_fm_dn = calculate_bands(p_fm, nup_fm, ndown_fm, k_path)
-    em_afm_up, em_afm_dn = calculate_bands(p_afm, nup_afm, ndown_afm, k_path)
+k_path, k_dist = define_k_path(Nk_bands) 
 
-    # --- Plot Band Structure --- 
-    plot_bands(k_dist, em_fm_up, em_fm_dn, "FM Mean-field Bands (fig53)", "fig54_FM_bands.png")
-    plot_bands(k_dist, em_afm_up, em_afm_dn, "AFM Mean-field Bands (fig53)", "fig54_AFM_bands.png")
-    
-    # --- Optionally Calculate and Plot DOS --- 
-    if compute_dos
-        # FM DOS
-        ω_grid_fm, dos_fm_up, dos_fm_dn = calculate_dos(p_fm, nup_fm, ndown_fm; 
-                                                      Nk_dos=Nk_dos_grid, 
-                                                      dos_smearing_sigma=dos_sigma, 
-                                                      dos_energy_points=dos_points)
-        plot_dos(ω_grid_fm, dos_fm_up, dos_fm_dn, "FM Density of States ", "FM_dos")
+em_fm_up, em_fm_dn = calculate_bands(p_fm, nup_fm, ndown_fm, k_path)
+em_afm_up, em_afm_dn = calculate_bands(p_afm, nup_afm, ndown_afm, k_path)
 
-        # AFM DOS
-        ω_grid_afm, dos_afm_up, dos_afm_dn = calculate_dos(p_afm, nup_afm, ndown_afm; 
-                                                         Nk_dos=Nk_dos_grid, 
-                                                         dos_smearing_sigma=dos_sigma, 
-                                                         dos_energy_points=dos_points)
-        plot_dos(ω_grid_afm, dos_afm_up, dos_afm_dn, "AFM Density of States ", "AFM_dos")
-    else
-        println("Skipping DOS calculation and plotting.")
-    end
+# --- Plot Band Structure --- 
+plot_bands(k_dist, em_fm_up, em_fm_dn, "FM Mean-field Bands (fig53)")
+plot_bands(k_dist, em_afm_up, em_afm_dn, "AFM Mean-field Bands (fig53)")
 
-    println("Script finished.")
+# --- Optionally Calculate and Plot DOS --- 
+if compute_dos
+    # FM DOS
+    ω_grid_fm, dos_fm_up, dos_fm_dn = calculate_dos(p_fm, nup_fm, ndown_fm; 
+                                                    Nk_dos=Nk_dos_grid, 
+                                                    dos_smearing_sigma=dos_sigma, 
+                                                    dos_energy_points=dos_points)
+    plot_dos(ω_grid_fm, dos_fm_up, dos_fm_dn, "FM Density of States ", "FM_dos")
 
-
-
+    # AFM DOS
+    ω_grid_afm, dos_afm_up, dos_afm_dn = calculate_dos(p_afm, nup_afm, ndown_afm; 
+                                                        Nk_dos=Nk_dos_grid, 
+                                                        dos_smearing_sigma=dos_sigma, 
+                                                        dos_energy_points=dos_points)
+    plot_dos(ω_grid_afm, dos_afm_up, dos_afm_dn, "AFM Density of States ", "AFM_dos")
+else
+    println("Skipping DOS calculation and plotting.")
 end
+
+println("Script finished.") =#
+
+using Pkg
+using Revise
+revise()
+include("HubbardModel.jl")
+using .HubbardModel
+t = 1.0
+ne = 0.5
+U = 5.0 # for t/U = 0.2
+Nk_scf = 50       # K-points for SCF convergence
+Nk_dos_grid = 500 # K-points per dim for DOS grid
+beta = 0.03
+scf_tol = 1e-6
+scf_maxiter = 200
+dos_sigma = 0.05
+dos_points = 400
+
+# --- Setup MFParams --- 
+p  = MFParams(U=U,  t=t, ne=ne, Nk=Nk_scf, β=beta, tol=scf_tol, maxiter=scf_maxiter)
+nup = [0.5, 0.5]
+ndown = [0.5, 0.5]
+k_path, k_dist = HubbardModel.ReciprocalSpace.generate_k_path() 
+em_up, em_dn = calculate_bands(p, nup, ndown, k_path)
+
+# --- Plot Band Structure --- 
+plot_bands(k_dist, em_up, em_dn, "parabands")
