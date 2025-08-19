@@ -4,6 +4,6 @@ I replicated some parts of [paper](https://arxiv.org/pdf/1403.2259) by Claveau e
 
 08/2025:
 
-I decided to return to this project to see if I could study the Su-Schrieffer-Heeger (SSH) model with the software I had. See some of my results in `figures_ssh/`! 
+I decided to return to this project to see if I could study the Su-Schrieffer-Heeger (SSH) model with the software I already had. See some relevant plots in `figures_ssh/`
 
-I have a growing interest in topological insulators, so also played around with Floquet drives with a pure SSH model.
+also vibecoded a floquet drive addition to the hamiltonian. not sure how accurate my results are so should return to this
